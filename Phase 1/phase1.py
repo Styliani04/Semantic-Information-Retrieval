@@ -14,6 +14,7 @@ client = Elasticsearch("http://localhost:9200")
 
 nltk.download("stopwords")
 nltk.download("punkt_tab")
+nltk.download('wordnet')
 
 def preprocess_english_text(text: str):
     # Normalize case
@@ -28,7 +29,16 @@ def preprocess_english_text(text: str):
     stemmer = PorterStemmer()
     lemmatizer = WordNetLemmatizer()
     word_tokens = word_tokenize(text)
-    return text
+
+    preprocessed_words = []
+
+    for word in word_tokens:
+        lemma = lemmatizer.lemmatize(word)
+        stem = stemmer.stem(lemma)
+        preprocessed_words.append(stem)
+    
+    return " ".join(preprocessed_words)
+
 
 file_directory = os.path.dirname(os.path.abspath(__file__))
 file = os.path.join(file_directory, "documents.csv")
