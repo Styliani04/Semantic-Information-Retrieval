@@ -70,4 +70,58 @@ preprocessed_text_df = pd.DataFrame({
 preprocessed_text_df.to_csv("preprocessed_documents.csv",index=False)
 
 # we create a json file to use it in the indexing
+file_directory2 = os.path.dirname(os.path.abspath(__file__))
+file_path = os.path.join(file_directory2, "..", "preprocessed_documents.csv")
+file2= os.path.abspath(file_path)
+
+df = pd.read_csv(file2)
+
+with open(file2, "w",  encoding="utf-8") as file:
+    for _, row in df.iterrows():
+        json_data = {"ID": row["ID"], "Text": row["Text"]}
+        file.write(json.dumps(json_data) + "\n")
+
+# creating our mapping with standard analyser and BM25 similarity
+
+mapping = {
+    "settings":{
+        "analysis": {
+            "analyzer": {
+                "default": {
+                    "type": "english"
+                },
+                "default_search": {
+                    "type": "english"
+                }
+            }
+        },
+        "index":{
+            "similarity":{
+                "bm25_similarity":{
+                    "type": "BM25"
+                }
+            }
+        }
+    },
+    "mappings": {
+        "properties": {
+            "ID":{
+                    "type": "text",
+                    "copy_to": "allContent",                
+                    "similarity": "bm25_similarity"
+                },
+            "Text":{
+                    "type": "text",
+                    "copy_to": "allContent",                
+                    "similarity": "bm25_similarity"
+                   },
+        }
+    }
+}
+
+# creating an index with the mapping above
+if client.indices.exists(index="my_texts"):
+    client.indices.delete(index="my_texts")
+
+client.indices.create(index="my_texts", body=mapping)
 
