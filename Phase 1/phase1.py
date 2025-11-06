@@ -11,7 +11,10 @@ from nltk.stem import PorterStemmer, WordNetLemmatizer
 import pandas as pd
 
 client = Elasticsearch("http://localhost:9200")
-print(os.getcwd())
+
+nltk.download("stopwords")
+nltk.download("punkt_tab")
+
 def preprocess_english_text(text: str):
     # Normalize case
     text = text.lower()
@@ -27,8 +30,10 @@ def preprocess_english_text(text: str):
     word_tokens = word_tokenize(text)
     return text
 
+file_directory = os.path.dirname(os.path.abspath(__file__))
+file = os.path.join(file_directory, "documents.csv")
 
-df = pd.read_csv("documents.csv")
+df = pd.read_csv(file)
 
 texts = df["Text"]
 
