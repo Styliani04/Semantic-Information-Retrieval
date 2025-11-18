@@ -152,3 +152,18 @@ def pretty_search_response(response):
             
             pretty_output = f"\nID: {id}\nText: {text}"
             print(pretty_output)
+
+queries = pd.read_csv("queries.csv")
+
+for query in queries["Text"]:
+    for k in [20, 30, 50]:
+        response = client.search(
+            index="my_texts",
+            size=k,
+            query={
+                "match": {
+                    "Text": query,
+                }
+            }
+        )
+    pretty_search_response(response)    
