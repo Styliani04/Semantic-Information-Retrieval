@@ -1,5 +1,6 @@
 
 import os
+import sys
 import json
 from elasticsearch import Elasticsearch
 from elasticsearch.helpers import bulk
@@ -17,6 +18,9 @@ client = Elasticsearch("http://localhost:9200")
 nltk.download("stopwords")
 nltk.download("punkt_tab")
 nltk.download('wordnet')
+
+# initializing the encoding to not have the UnicodeEncodeError when printing the texts
+sys.stdout.reconfigure(encoding='utf-8')
 
 # the preprocessing function
 def preprocess_english_text(text: str):
@@ -148,12 +152,15 @@ def pretty_search_response(response):
     else:
         for hit in response["hits"]["hits"]:
             id = hit["_id"]
-            text = hit["_text"]
+            text = hit["_source"]["Text"]
             
             pretty_output = f"\nID: {id}\nText: {text}"
             print(pretty_output)
 
-queries = pd.read_csv("queries.csv")
+queries_file_directory = os.path.dirname(os.path.abspath(__file__))
+queries_file = os.path.join(file_directory, "queries.csv")
+
+queries = pd.read_csv(queries_file)
 
 for query in queries["Text"]:
     for k in [20, 30, 50]:
