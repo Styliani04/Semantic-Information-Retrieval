@@ -1,4 +1,3 @@
-import os
 import subprocess
 import sys
 import json
@@ -9,9 +8,10 @@ import pandas as pd
 # initializing our elasticsearch port
 client = Elasticsearch("http://localhost:9200")
 
+# 1. Preparing the data
+
 # initializing the encoding to not have the UnicodeEncodeError when printing the texts
 sys.stdout.reconfigure(encoding='utf-8')
-
 
 df = pd.read_csv("documents.csv")
 
@@ -21,8 +21,10 @@ with open("documents.jsonl", "w",  encoding="utf-8") as file:
         json_data = {"ID": row["ID"], "Text": row["Text"]}
         file.write(json.dumps(json_data) + "\n")
 
+print(f"Created documents.jsonl")
 
-# creating our mapping with standard analyzer and BM25 similarity
+# 2. Creating the index
+# Creating our mapping with standard analyzer and BM25 similarity
 mapping = {
     "settings":{
         "analysis": {
@@ -54,7 +56,7 @@ mapping = {
     }
 }
 
-# creating an index with the mapping above
+# Creating an index with the mapping above
 if client.indices.exists(index="my_texts"):
     client.indices.delete(index="my_texts")
 client.indices.create(index="my_texts", body=mapping)
@@ -71,7 +73,7 @@ with open("documents.jsonl", "r", encoding="utf-8") as file:
 # adding the texts into the index with bulk since we have a big dataset
 bulk(client, documents, refresh=True)
 
-# Function to run queries and save results in TREC format
+# 3. Function to run queries and save results in TREC format
 def run_queries_and_save_results(k, output_file):
     queries = pd.read_csv("queries.csv")
 
@@ -104,7 +106,34 @@ def run_queries_and_save_results(k, output_file):
                 
 # Running queries for k = 20, 30, 50 and saving results
 for k in [20, 30, 50]:
-    output_file = f"results_k{k}.txt"
+    output_file = f"results_{k}.txt"
     run_queries_and_save_results(k, output_file)
     print(f"Created {output_file}")
     
+#4. Evaluating results using trec_eval    
+qrels = "qrels.txt"
+run_files = {
+    "20": "results_20.txt",
+    "30": "results_30.txt", 
+    "50": "results_50.txt"
+}
+
+metrics = ["map", "P.5,10,15,20"] 
+
+for k, run_file in run_files.items():
+    output_file = f"eval_{k}.txt"
+    
+    cmd = ["trec_eval"]
+    for m in metrics:
+        cmd.extend(["-m", m])
+    cmd.extend([qrels, run_file])   # trec_eval -m map -m P.5,10,15,20 qrels.txt results_k.txt > eval_k.txt
+
+        
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True) # Running trec_eval command with silenced warnings
+        
+    if result.returncode == 0: # If trec_eval ran successfully
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(result.stdout)
+        print(f"Created {output_file}")
+    else:
+        print(f"Error running trec_eval for k={k}")
