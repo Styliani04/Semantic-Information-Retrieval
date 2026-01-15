@@ -1,19 +1,18 @@
+import os
 import pandas as pd
 import sys
 import re as regex 
 import numpy as np  
 from sentence_transformers import SentenceTransformer # pip install sentence-transformers, pip install tf-keras
-import faiss # pip install faiss-cpu
+import faiss 
 import subprocess
-from elasticsearch import Elasticsearch
 
-client = Elasticsearch("http://localhost:9200")
 sys.stdout.reconfigure(encoding='utf-8')
 
 #1. Preprocessing the texts
-df = pd.read_csv("Phase2/documents.csv")
-
+df = pd.read_csv("documents.csv")
 df["Text"] = df["Text"].fillna("")
+
 def preprocess_text(text: str):
     text = text.strip()                      
     text = regex.sub(r"\s+", " ", text)        
@@ -25,110 +24,79 @@ df = df[df["preprocessed_text"].str.len() > 0]
 
 documents = df["preprocessed_text"].tolist()
 
-#2. Text to dense-vectors/embeddings conversion with DistilBERT
-model = SentenceTransformer("all-MiniLM-L6-v2")  # 384 dimensions
+#2. Text to dense-vectors/embeddings conversion with SentenceTransformer
+model = SentenceTransformer("all-MiniLM-L6-v2")  # Dimension: 384
 
-#This takes a while to load the model and compute the embeddings, like 20-30 minutes, so we saved them in "document_embeddings.npy" when we ran it the first time.
-#If you don't want to wait, just comment out lines 31-35 and uncomment lines 37-38 to load the precomputed embeddings.
+# Uncomment the following lines and comment line 39 to compute embeddings from scratch
+'''
 embeddings = model.encode(
     documents,
-    batch_size=32,
+    batch_size=64,
     show_progress_bar=True
 )
 
-# np.save("document_embeddings.npy", embeddings)
-# embeddings = np.load("document_embeddings.npy")
+np.save("document_embeddings.npy", embeddings)
+'''
+# Loading pre-computed embeddings
+embeddings = np.load("document_embeddings.npy")
 
 
 #3. Building the FAISS index with IndexFlatL2
 dimension = embeddings.shape[1]
-index = faiss.IndexFlatL2(dimension)
+index = faiss.IndexFlatIP(dimension)
+faiss.normalize_L2(embeddings)  # Normalize for cosine similarity
 index.add(embeddings)
 
 #4. Work on queries.csv
-
-queries_df = pd.read_csv("Phase2/queries.csv")
+queries_df = pd.read_csv("queries.csv")
 queries = queries_df["Text"].tolist()
+query_ids = queries_df["ID"].tolist()
 
-for query in queries:
-    #a) Calculate the embedding
-    embedding = model.encode([query])
-    #b) Faiss search with L2 distance
-    distances, indices = index.search(embedding, 50)
+#a) Encode all queries at once to speed up the process
+query_embeddings = model.encode(queries, show_progress_bar=True, batch_size=64)
+faiss.normalize_L2(query_embeddings)
 
-    print(f"\n{'='*50}")
-    print(f"ΤΕΧΤ: {query}")
-    print(f"{'='*50}")
-
-    for k in [20, 30, 50]:    
-        print(f"\n--- Top {k} Results ---")
-        
-        #c) Display results in descending order of similarity (ascending order of L2 distance)
-        for i in range(k):
-            id = indices[0][i]
-            distance = distances[0][i]
-            similarity = 1 / (1 + distance)
-            print(f"Rank {i+1:2}: Doc ID {id} | Similarity: {similarity} | Distance: {distance}")
-
-#5. Evaluating results using trec_eval    
-def run_queries_and_save_results(k, output_file):
-    queries = pd.read_csv("queries.csv")
-
-    with open(output_file, "w", encoding="utf-8") as f:
-        for _, row in queries.iterrows():
-            query_id = row["ID"]
-            query_text = row["Text"]
-
-            response = client.search(
-                index="my_texts",
-                size=k,
-                track_total_hits=False,
-                query={
-                    "match": {
-                        "Text": query_text
-                    }
-                }
-            )
-            
-            # Sort hits by score in descending order
-            hits_sorted = sorted(response["hits"]["hits"], key=lambda x: x["_score"], reverse=True)
-
-            rank = 1
-            for hit in hits_sorted:
-                doc_id = hit["_id"]
-                score = hit["_score"]
-
-                f.write(f"{query_id} Q0 {doc_id} {rank} {score} myIRmethod\n")
-                rank += 1
-                
 for k in [20, 30, 50]:
-    output_file = f"results_{k}.txt"
-    run_queries_and_save_results(k, output_file)
-    print(f"Created {output_file}")
+    
+    #b) One-time search for all queries
+    distances, indices = index.search(query_embeddings, k)
+    
+    output_file = f"results2_{k}.txt"
+    with open(output_file, "w", encoding="utf-8") as f:
+        for i, qid in enumerate(query_ids):
+            #c) Save results in TREC format
+            for rank, (doc_idx, score) in enumerate(zip(indices[i], distances[i]), 1):
+                doc_id = df.iloc[doc_idx]["ID"]
+                f.write(f"{qid} Q0 {doc_id} {rank} {score} FAISS_TRANSFORMER\n")
 
-qrels = "qrels.txt"
+#5. Evaluating results using trec_eval       
+qrels = "qrels.txt" 
+
 run_files = {
-    "20": "results_20.txt",
-    "30": "results_30.txt", 
-    "50": "results_50.txt"
+    "20": "results2_20.txt",
+    "30": "results2_30.txt", 
+    "50": "results2_50.txt"
 }
 
 metrics = ["map", "P.5,10,15,20"] 
 
 for k, run_file in run_files.items():
-    output_file = f"eval_{k}.txt"
+    output_file = f"eval2_{k}.txt"
     
     cmd = ["trec_eval"]
     for m in metrics:
         cmd.extend(["-m", m])
-    cmd.extend([qrels, run_file])   # trec_eval -m map -m P.5,10,15,20 qrels.txt results_k.txt > eval_k.txt
-
-        
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True) # Running trec_eval command with silenced warnings
-        
-    if result.returncode == 0: # If trec_eval ran successfully
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(result.stdout)
-        print(f"Created {output_file}")
-    else:
-        print(f"Error running trec_eval for k={k}")
+    cmd.extend([qrels, run_file])   # trec_eval -m map -m P.5,10,15,20 qrels.txt results2_k.txt > eval2_k.txt
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True) # Running trec_eval command with silenced warnings
+    
+        if result.returncode == 0: # If trec_eval ran successfully
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(result.stdout)
+                print(f"Created {output_file}")
+        else:
+            print(f"Error running trec_eval for k={k}")
+            print(result.stderr)
+    except Exception as e:
+        print(f"An error occurred while running trec_eval for k={k}: {e}")
+     
